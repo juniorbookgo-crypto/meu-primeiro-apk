@@ -1,234 +1,308 @@
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:fl_chart/fl_chart.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 
-void main() {
-  runApp(const CaixaPremiumApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await MobileAds.instance.initialize();
+  runApp(const MyApp());
 }
 
-class CaixaPremiumApp extends StatelessWidget {
-  const CaixaPremiumApp({super.key});
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  bool darkMode = true;
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: HomePage(),
+      title: 'Multi Tool PRO',
+      theme: darkMode ? ThemeData.dark() : ThemeData.light(),
+      home: HomePage(
+        toggleTheme: () {
+          setState(() {
+            darkMode = !darkMode;
+          });
+        },
+      ),
     );
   }
 }
 
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+class HomePage extends StatelessWidget {
+  final VoidCallback toggleTheme;
+  const HomePage({super.key, required this.toggleTheme});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  Widget build(BuildContext context) {
+    final tools = [
+      {"title": "Calculadora", "page": const CalculatorPage()},
+      {"title": "IMC", "page": const IMCPage()},
+      {"title": "Senha", "page": const PasswordPage()},
+      {"title": "Conversor Temp", "page": const TempPage()},
+      {"title": "QR Code", "page": const QRPage()},
+      {"title": "Notas", "page": const NotesPage()},
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Multi Tool PRO"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.brightness_6),
+            onPressed: toggleTheme,
+          )
+        ],
+      ),
+      body: GridView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: tools.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 16,
+          mainAxisSpacing: 16,
+        ),
+        itemBuilder: (context, index) {
+          return ElevatedButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => tools[index]["page"] as Widget),
+              );
+            },
+            child: Text(
+              tools[index]["title"].toString(),
+              textAlign: TextAlign.center,
+            ),
+          );
+        },
+      ),
+      bottomNavigationBar: const AdBanner(),
+    );
+  }
 }
 
-class _HomePageState extends State<HomePage> {
-  String loteria = "megasena";
-  List<dynamic> historico = [];
-  Map<int, int> frequencia = {};
-  Map<int, int> atraso = {};
-  Map<int, double> score = {};
-  List<List<int>> palpites = [];
-  bool carregando = true;
-  bool premium = true;
+class AdBanner extends StatefulWidget {
+  const AdBanner({super.key});
+
+  @override
+  State<AdBanner> createState() => _AdBannerState();
+}
+
+class _AdBannerState extends State<AdBanner> {
+  BannerAd? bannerAd;
 
   @override
   void initState() {
     super.initState();
-    atualizarAutomaticamente();
+    bannerAd = BannerAd(
+      size: AdSize.banner,
+      adUnitId: "ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX", // COLOQUE SEU ID
+      listener: BannerAdListener(),
+      request: const AdRequest(),
+    )..load();
   }
 
-  Future<void> atualizarAutomaticamente() async {
-    await carregarDados();
-    gerarIA();
-    setState(() => carregando = false);
-  }
-
-  Future<void> carregarDados() async {
-    historico.clear();
-    frequencia.clear();
-    atraso.clear();
-    score.clear();
-
-    final urlBase =
-        "https://servicebus2.caixa.gov.br/portaldeloterias/api/$loteria";
-
-    final ultimoResponse =
-        await http.get(Uri.parse(urlBase), headers: {"Accept": "application/json"});
-
-    final ultimo = json.decode(ultimoResponse.body);
-    int numeroAtual = ultimo['numero'];
-
-    int limite = 250;
-
-    for (int i = 0; i < limite; i++) {
-      int numero = numeroAtual - i;
-      if (numero <= 0) break;
-
-      final response = await http.get(
-          Uri.parse("$urlBase/$numero"),
-          headers: {"Accept": "application/json"});
-
-      if (response.statusCode == 200) {
-        final concurso = json.decode(response.body);
-        historico.add(concurso);
-
-        for (var dez in concurso['listaDezenas']) {
-          int n = int.parse(dez);
-          frequencia[n] = (frequencia[n] ?? 0) + 1;
-        }
-      }
-
-      await Future.delayed(const Duration(milliseconds: 20));
-    }
-
-    calcularAtraso();
-    calcularScore();
-  }
-
-  void calcularAtraso() {
-    Map<int, int> ultimoSorteio = {};
-
-    for (int i = 0; i < historico.length; i++) {
-      for (var dez in historico[i]['listaDezenas']) {
-        int n = int.parse(dez);
-        ultimoSorteio[n] ??= i;
-      }
-    }
-
-    for (int i = 1; i <= 60; i++) {
-      atraso[i] = ultimoSorteio[i] ?? historico.length;
-    }
-  }
-
-  void calcularScore() {
-    for (int i = 1; i <= 60; i++) {
-      double freq = (frequencia[i] ?? 0).toDouble();
-      double atr = (atraso[i] ?? 0).toDouble();
-
-      double pesoRecencia = freq * 0.7;
-      double pesoAtraso = atr * 0.3;
-
-      score[i] = pesoRecencia + pesoAtraso;
-    }
-  }
-
-  void gerarIA() {
-    palpites.clear();
-    Random rand = Random();
-
-    List<int> ordenado = score.keys.toList()
-      ..sort((a, b) => score[b]!.compareTo(score[a]!));
-
-    for (int p = 0; p < 3; p++) {
-      Set<int> jogo = {};
-
-      while (jogo.length < 6) {
-        int candidato = ordenado[rand.nextInt(20)];
-        jogo.add(candidato);
-      }
-
-      // Balanceamento par/ímpar
-      int pares = jogo.where((n) => n % 2 == 0).length;
-      if (pares < 2 || pares > 4) continue;
-
-      palpites.add(jogo.toList()..sort());
-    }
-
-    monteCarlo();
-  }
-
-  void monteCarlo() {
-    Random rand = Random();
-    for (int i = 0; i < 10000; i++) {
-      rand.nextInt(60);
-    }
-  }
-
-  Future<void> exportarPDF() async {
-    final pdf = pw.Document();
-
-    pdf.addPage(
-      pw.Page(
-        build: (pw.Context context) {
-          return pw.Column(
-            children: [
-              pw.Text("Relatório Mega Sena Premium"),
-              pw.SizedBox(height: 20),
-              ...palpites.map((p) => pw.Text(p.join(" - "))),
-            ],
+  @override
+  Widget build(BuildContext context) {
+    return bannerAd == null
+        ? const SizedBox()
+        : SizedBox(
+            height: 50,
+            child: AdWidget(ad: bannerAd!),
           );
-        },
-      ),
-    );
-
-    await Printing.layoutPdf(onLayout: (format) => pdf.save());
   }
+}
 
-  List<BarChartGroupData> gerarGrafico() {
-    return frequencia.entries.take(10).map((e) {
-      return BarChartGroupData(
-        x: e.key,
-        barRods: [
-          BarChartRodData(toY: e.value.toDouble()),
-        ],
-      );
-    }).toList();
+class CalculatorPage extends StatefulWidget {
+  const CalculatorPage({super.key});
+
+  @override
+  State<CalculatorPage> createState() => _CalculatorPageState();
+}
+
+class _CalculatorPageState extends State<CalculatorPage> {
+  final controller = TextEditingController();
+  String result = "";
+
+  void calculate() {
+    try {
+      result = controller.text;
+      setState(() {});
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.green.shade50,
-      appBar: AppBar(
-        backgroundColor: Colors.green.shade800,
-        title: const Text("Mega Sena Premium IA"),
+      appBar: AppBar(title: const Text("Calculadora")),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(controller: controller),
+            ElevatedButton(onPressed: calculate, child: const Text("Calcular")),
+            Text(result, style: const TextStyle(fontSize: 24))
+          ],
+        ),
       ),
-      body: carregando
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text("🎯 Palpites IA",
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  ...palpites.map((p) => Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Text(p.join(" - "),
-                              style: const TextStyle(fontSize: 18)),
-                        ),
-                      )),
-                  const SizedBox(height: 20),
-                  const Text("📊 Top 10 Frequência",
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  SizedBox(
-                    height: 250,
-                    child: BarChart(
-                      BarChartData(
-                        barGroups: gerarGrafico(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: exportarPDF,
-                    child: const Text("Exportar PDF"),
-                  )
-                ],
-              ),
-            ),
+    );
+  }
+}
+
+class IMCPage extends StatefulWidget {
+  const IMCPage({super.key});
+
+  @override
+  State<IMCPage> createState() => _IMCPageState();
+}
+
+class _IMCPageState extends State<IMCPage> {
+  final peso = TextEditingController();
+  final altura = TextEditingController();
+  String resultado = "";
+
+  void calcular() {
+    double p = double.parse(peso.text);
+    double a = double.parse(altura.text);
+    double imc = p / (a * a);
+    resultado = "IMC: ${imc.toStringAsFixed(2)}";
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("IMC")),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(controller: peso, decoration: const InputDecoration(labelText: "Peso")),
+            TextField(controller: altura, decoration: const InputDecoration(labelText: "Altura")),
+            ElevatedButton(onPressed: calcular, child: const Text("Calcular")),
+            Text(resultado, style: const TextStyle(fontSize: 24))
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class PasswordPage extends StatefulWidget {
+  const PasswordPage({super.key});
+
+  @override
+  State<PasswordPage> createState() => _PasswordPageState();
+}
+
+class _PasswordPageState extends State<PasswordPage> {
+  String senha = "";
+
+  void gerar() {
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    Random rnd = Random();
+    senha = String.fromCharCodes(
+        Iterable.generate(12, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Gerador de Senha")),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(senha, style: const TextStyle(fontSize: 20)),
+            ElevatedButton(onPressed: gerar, child: const Text("Gerar Senha"))
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class TempPage extends StatefulWidget {
+  const TempPage({super.key});
+
+  @override
+  State<TempPage> createState() => _TempPageState();
+}
+
+class _TempPageState extends State<TempPage> {
+  final celsius = TextEditingController();
+  String resultado = "";
+
+  void converter() {
+    double c = double.parse(celsius.text);
+    double f = (c * 9 / 5) + 32;
+    resultado = "$f °F";
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Conversor °C → °F")),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(controller: celsius),
+            ElevatedButton(onPressed: converter, child: const Text("Converter")),
+            Text(resultado, style: const TextStyle(fontSize: 24))
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class QRPage extends StatelessWidget {
+  const QRPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("QR Code")),
+      body: const Center(
+        child: Text("Implementar pacote qr_flutter depois"),
+      ),
+    );
+  }
+}
+
+class NotesPage extends StatefulWidget {
+  const NotesPage({super.key});
+
+  @override
+  State<NotesPage> createState() => _NotesPageState();
+}
+
+class _NotesPageState extends State<NotesPage> {
+  final controller = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Bloco de Notas")),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: TextField(
+          controller: controller,
+          maxLines: null,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+      ),
     );
   }
 }
